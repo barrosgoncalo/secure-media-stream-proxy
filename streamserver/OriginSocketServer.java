@@ -1,3 +1,5 @@
+import java.awt.MultipleGradientPaint.CycleMethod;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
@@ -7,7 +9,20 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.Key;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.CertificateException;
+import java.util.Arrays;
 import java.util.concurrent.Executors;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.spec.IvParameterSpec;
 
 /**
  * Origin server implemented with raw sockets only (java.net.ServerSocket / Socket),
@@ -68,13 +83,19 @@ public class OriginSocketServer {
                 return;
             }
 
-            serveFile(out, file, rangeHeader);
-        } catch (IOException e) {
+            serveFile(out, file, rangeHeader, SecurityUtils.loadSharedKey());
+        } catch (Exception e) {
             // Client (the proxy) disconnected mid-stream: normal on seek/close, nothing to do.
         }
     }
 
-    static void serveFile(OutputStream out, Path file, String rangeHeader) throws IOException {
+    static void serveFile(OutputStream out, Path file, String rangeHeader, Key sharedKey)
+            throws IOException, NoSuchAlgorithmException,
+                    InvalidKeyException, NoSuchPaddingException,
+                    InvalidAlgorithmParameterException, IllegalBlockSizeException,
+                    BadPaddingException, UnrecoverableKeyException, KeyStoreException,
+                    CertificateException
+    {
         long size = Files.size(file);
         long start = 0, end = size - 1;
         boolean partial = false;
@@ -105,17 +126,30 @@ public class OriginSocketServer {
         long length = end - start + 1;
         String extraHeaders = "Accept-Ranges: bytes\r\n" +
                 (partial ? "Content-Range: bytes " + start + "-" + end + "/" + size + "\r\n" : "");
-        writeHeaders(out, partial ? 206 : 200, partial ? "Partial Content" : "OK", length, "video/mp4", extraHeaders);
+        writeHeaders(
+            out,
+            partial ? 206 : 200, partial ? "Partial Content" : "OK", length,
+            "video/mp4", extraHeaders
+            );
+
+        DataOutputStream dataOut = new DataOutputStream(out);
 
         try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "r")) {
             raf.seek(start);
             byte[] block = new byte[BLOCK_SIZE];
             long remaining = length;
+
             while (remaining > 0) {
                 int n = raf.read(block, 0, (int) Math.min(block.length, remaining));
                 if (n < 0) break;
-                out.write(block, 0, n);
-                out.flush();
+
+                byte[] iv = SecurityUtils.generateIv();
+                byte[] ciphertext = SecurityUtils.encrypt( Arrays.copyOf(block, n), sharedKey, iv );
+
+                dataOut.write(ciphertext.length);
+                dataOut.write(iv);
+                dataOut.write(ciphertext);
+                dataOut.flush();
                 remaining -= n;
             }
         }
