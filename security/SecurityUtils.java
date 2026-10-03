@@ -11,11 +11,12 @@ import javax.crypto.spec.*;
 
 public class SecurityUtils {
 
-    private static final String ALGO = "AES";
     private static final String CONFIG = "AES/GCM/NoPadding";
+    private static final String ALIAS = "streamkey";
+    private static final String KEYSTORE_FILE = "shared.p12";
 
     public static final int GCM_IV_LENGTH = 12;
-    public static final int GCM_TAG_LENGTH_BITS = 12;
+    public static final int GCM_TAG_LENGTH_BITS = 128;
     private static final SecureRandom secureRandom = new SecureRandom();
 
     public static byte[] generateIv() {
@@ -31,11 +32,11 @@ public class SecurityUtils {
     {
         KeyStore ks = KeyStore.getInstance("pkcs12");
         char[] password = "changeit".toCharArray();
-        try(FileInputStream in = new FileInputStream("shared.p12")) {
+        try(FileInputStream in = new FileInputStream(KEYSTORE_FILE)) {
             ks.load(in, password);
         }
 
-        return ks.getKey("streamkey", password);
+        return ks.getKey(ALIAS, password);
     }
 
     public static byte[] encrypt(byte[] plaintext, Key key, byte[] iv) 
