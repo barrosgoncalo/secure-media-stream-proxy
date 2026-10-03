@@ -38,7 +38,9 @@ import static security.SecurityUtils.GCM_TAG_LENGTH_BITS;
 public class ProxySocketServer {
 
     static final int BLOCK_SIZE = 1024;
-    static final int FRAME_SIZE = BLOCK_SIZE + GCM_IV_LENGTH + GCM_TAG_LENGTH_BITS;
+    static final int TAG_LEN = GCM_TAG_LENGTH_BITS / 8;
+    static final int OVERHEAD = TAG_LEN + GCM_IV_LENGTH;
+    static final int FRAME_SIZE = BLOCK_SIZE + OVERHEAD;
 
     static final String INDEX_HTML = """
             <!doctype html>
@@ -71,7 +73,7 @@ public class ProxySocketServer {
                 Socket client = server.accept();
                 pool.submit(() -> {
 					try {
-						handle(client, originHost, originPort);
+						handle(client, originHost, originPort, SecurityUtils.loadSharedKey());
 					} catch (Exception e) {
 						e.printStackTrace();
 					}
@@ -80,7 +82,7 @@ public class ProxySocketServer {
         }
     }
 
-    static void handle(Socket browser, String originHost, int originPort) throws InvalidKeyException, UnrecoverableKeyException, IllegalBlockSizeException, BadPaddingException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidAlgorithmParameterException, KeyStoreException, CertificateException {
+    static void handle(Socket browser, String originHost, int originPort, Key sharedKey) throws InvalidKeyException, UnrecoverableKeyException, IllegalBlockSizeException, BadPaddingException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidAlgorithmParameterException, KeyStoreException, CertificateException {
         try (browser) {
             InputStream in = browser.getInputStream();
             OutputStream out = browser.getOutputStream();
@@ -111,7 +113,7 @@ public class ProxySocketServer {
             }
 
             String name = path.substring("/video/".length());
-            relayFromOrigin(out, originHost, originPort, name, rangeHeader, SecurityUtils.loadSharedKey());
+            relayFromOrigin(out, originHost, originPort, name, rangeHeader, sharedKey);
 
         } catch (IOException e) {
             // Browser disconnected or origin unreachable mid-stream: nothing to do.
@@ -171,7 +173,7 @@ public class ProxySocketServer {
             }
 
             long numChunks = ( encryptedContentLength + FRAME_SIZE - 1 ) / FRAME_SIZE;
-            long plaintextContentLength = encryptedContentLength - (numChunks * 28);
+            long plaintextContentLength = encryptedContentLength - (numChunks * OVERHEAD);
 
             // Forward status + the headers the browser needs for playback/seeking
             StringBuilder resp = new StringBuilder();
@@ -187,22 +189,19 @@ public class ProxySocketServer {
             if (plaintextContentLength <= 0) return;
 
             DataInputStream dataIn = new DataInputStream(originIn);
-            long remainingEncryptedBytes = encryptedContentLength;
+            long remaining = encryptedContentLength;
 
             // Relay the body block by block; closing either socket cancels the transfer.
-            byte[] buf = new byte[FRAME_SIZE];
-            while (remainingEncryptedBytes > 0) {
-
-                byte[] iv = new byte[SecurityUtils.GCM_IV_LENGTH];
-
-                int n = dataIn.read(iv, 0, SecurityUtils.GCM_IV_LENGTH);
-                n += dataIn.read(buf, n - 1, (int) Math.min(buf.length, remainingEncryptedBytes));
-
-                byte[] plaintext = SecurityUtils.decrypt(buf, sharedKey, iv);
-                if (n < 0) break;
+            while (remaining > 0) {
+                byte[] iv = new byte[GCM_IV_LENGTH];
+                dataIn.readFully(iv);
+                int ctLen = (int) Math.min(BLOCK_SIZE + TAG_LEN, remaining - GCM_IV_LENGTH);
+                byte[] ct = new byte[ctLen];
+                dataIn.readFully(ct);
+                byte[] plaintext = SecurityUtils.decrypt(ct, sharedKey, iv);
                 browserOut.write(plaintext);
                 browserOut.flush();
-                remainingEncryptedBytes -= n;
+                remaining -= GCM_IV_LENGTH + ctLen;
             }
         }
     }

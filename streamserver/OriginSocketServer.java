@@ -1,6 +1,5 @@
 package streamserver;
 
-import java.awt.MultipleGradientPaint.CycleMethod;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -42,7 +41,9 @@ import static security.SecurityUtils.GCM_TAG_LENGTH_BITS;
 public class OriginSocketServer {
 
     static final int BLOCK_SIZE = 1024;
-    static final int FRAME_SIZE = BLOCK_SIZE + GCM_IV_LENGTH + GCM_TAG_LENGTH_BITS;
+    static final int TAG_LEN = GCM_TAG_LENGTH_BITS / 8;
+    static final int OVERHEAD = TAG_LEN + GCM_IV_LENGTH;
+    static final int FRAME_SIZE = BLOCK_SIZE + OVERHEAD;
 
     public static void main(String[] args) throws Exception {
         int port = args.length > 0 ? Integer.parseInt(args[0]) : 8081;
@@ -53,12 +54,19 @@ public class OriginSocketServer {
             var pool = Executors.newCachedThreadPool();
             while (true) {
                 Socket client = server.accept();
-                pool.submit(() -> handle(client, root));
+                pool.submit(() -> {
+					try {
+						handle(client, root, SecurityUtils.loadSharedKey());
+					} catch (Exception e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				});
             }
         }
     }
 
-    static void handle(Socket socket, Path root) {
+    static void handle(Socket socket, Path root, Key key) {
         try (socket) {
             var in = socket.getInputStream();
             var out = socket.getOutputStream();
@@ -90,7 +98,7 @@ public class OriginSocketServer {
                 return;
             }
 
-            serveFile(out, file, rangeHeader, SecurityUtils.loadSharedKey());
+            serveFile(out, file, rangeHeader, key);
         } catch (Exception e) {
             // Client (the proxy) disconnected mid-stream: normal on seek/close, nothing to do.
         }
@@ -127,14 +135,15 @@ public class OriginSocketServer {
                 partial = true;
             } catch (NumberFormatException | ArrayIndexOutOfBoundsException ignored) {
                 // Malformed Range -> fall through and serve the whole file
+                ignored.printStackTrace();
             }
         }
 
         long length = end - start + 1;
 
-        long numChunks = ( length + FRAME_SIZE - 1 ) / FRAME_SIZE;
+        long numChunks = ( length + BLOCK_SIZE - 1 ) / BLOCK_SIZE;
 
-        long encryptContentLength = length + (numChunks * 28);
+        long encryptContentLength = length + (numChunks * OVERHEAD);
 
         String extraHeaders = "Accept-Ranges: bytes\r\n" +
                 (partial ? "Content-Range: bytes " + start + "-" + end + "/" + size + "\r\n" : "");
@@ -151,7 +160,7 @@ public class OriginSocketServer {
 
         try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "r")) {
             raf.seek(start);
-            byte[] block = new byte[FRAME_SIZE];
+            byte[] block = new byte[BLOCK_SIZE];
             long remaining = length;
 
             while (remaining > 0) {
