@@ -1,5 +1,10 @@
 import java.util.*;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.security.*;
+import java.security.cert.CertificateException;
+
 import javax.crypto.*;
 import javax.crypto.spec.*;
 
@@ -8,34 +13,48 @@ public class SecurityUtils {
     private static final String ALGO = "AES";
     private static final String CONFIG = "AES/GCM/NoPadding";
 
-    public final int GCM_IV_LENGTH = 12;
+    public static final int GCM_IV_LENGTH = 12;
     private static final SecureRandom secureRandom = new SecureRandom();
 
-    public static byte[] encrypt(String data) throws NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException, InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException {
+    public static byte[] generateIv() {
+        byte[] iv = new byte[GCM_IV_LENGTH];
+        secureRandom.nextBytes(iv);
+        return iv;
+    }
 
-
-        byte[] iv = new byte[GCM_I]
-
-        IvParameterSpec dps= new IvParameterSpec(iv);
-        // Comment last line for modes that don't operate with IVs
+    public static Key generateKey() throws NoSuchAlgorithmException {
 
         KeyGenerator kg = KeyGenerator.getInstance(ALGO);
         kg.init(256);
 
-        // Initialize the cryptosuite parameterization
+        return kg.generateKey();
+    }
+
+    public static Key loadSharedKey()
+        throws KeyStoreException, NoSuchAlgorithmException,
+                CertificateException, FileNotFoundException,
+                IOException, UnrecoverableKeyException
+    {
+        KeyStore ks = KeyStore.getInstance("pkcs12");
+        char[] password = "changeit".toCharArray();
+        try(FileInputStream in = new FileInputStream("shared.p12")) {
+            ks.load(in, password);
+        }
+
+        return ks.getKey("streamkey", password);
+    }
+
+    public static byte[] encrypt(byte[] plaintext, Key key, byte[] iv) 
+            throws NoSuchAlgorithmException, NoSuchPaddingException,
+                      InvalidKeyException, InvalidAlgorithmParameterException,
+                      IllegalBlockSizeException, BadPaddingException
+    {
+        IvParameterSpec dps = new IvParameterSpec(iv);
+            
         Cipher c = Cipher.getInstance(CONFIG);
-
-        Key key = kg.generateKey();
-
         c.init(Cipher.ENCRYPT_MODE, key, dps);
-        //c.init(Cipher.ENCRYPT_MODE, key);	    
 
-
-        byte plaintext[] = data.getBytes(); // input plaintext
-
-        byte ciphertext[] = c.doFinal(plaintext);  // out ciphertext
-
-        return ciphertext;
+        return c.doFinal( plaintext );
     }
 
 }
