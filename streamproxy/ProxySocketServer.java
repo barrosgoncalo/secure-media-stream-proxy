@@ -1,10 +1,29 @@
+package streamproxy;
+
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.Key;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.CertificateException;
 import java.util.concurrent.Executors;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+
+import security.SecurityUtils;
+
+import static security.SecurityUtils.GCM_IV_LENGTH;
+import static security.SecurityUtils.GCM_TAG_LENGTH_BITS;
 
 /**
  * Proxy implemented with raw sockets only (java.net.ServerSocket / Socket), no
@@ -19,6 +38,7 @@ import java.util.concurrent.Executors;
 public class ProxySocketServer {
 
     static final int BLOCK_SIZE = 1024;
+    static final int FRAME_SIZE = BLOCK_SIZE + GCM_IV_LENGTH + GCM_TAG_LENGTH_BITS;
 
     static final String INDEX_HTML = """
             <!doctype html>
@@ -105,7 +125,7 @@ public class ProxySocketServer {
     }
 
     static void relayFromOrigin(OutputStream browserOut, String originHost, int originPort,
-                                 String name, String rangeHeader) throws IOException {
+                                 String name, String rangeHeader) throws IOException, InvalidKeyException, UnrecoverableKeyException, IllegalBlockSizeException, BadPaddingException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidAlgorithmParameterException, KeyStoreException, CertificateException {
         try (Socket origin = new Socket(originHost, originPort)) {
             OutputStream originOut = origin.getOutputStream();
             InputStream originIn = origin.getInputStream();
@@ -128,7 +148,7 @@ public class ProxySocketServer {
             int code = Integer.parseInt(parts[1]);
             String reason = parts.length > 2 ? parts[2] : "";
 
-            long contentLength = -1;
+            long encryptedContentLength = -1;
             String contentType = null, contentRange = null, acceptRanges = null;
             String line;
             while ((line = HttpUtil.readLine(originIn)) != null && !line.isEmpty()) {
@@ -137,12 +157,15 @@ public class ProxySocketServer {
                 String h = line.substring(0, c).trim();
                 String v = line.substring(c + 1).trim();
                 switch (h.toLowerCase()) {
-                    case "content-length" -> contentLength = Long.parseLong(v);
+                    case "content-length" -> encryptedContentLength = Long.parseLong(v);
                     case "content-type" -> contentType = v;
                     case "content-range" -> contentRange = v;
                     case "accept-ranges" -> acceptRanges = v;
                 }
             }
+
+            long numChunks = ( encryptedContentLength + FRAME_SIZE - 1 ) / FRAME_SIZE;
+            long plaintextContentLength = encryptedContentLength - (numChunks * 28);
 
             // Forward status + the headers the browser needs for playback/seeking
             StringBuilder resp = new StringBuilder();
@@ -150,22 +173,31 @@ public class ProxySocketServer {
             if (contentType != null) resp.append("Content-Type: ").append(contentType).append("\r\n");
             if (acceptRanges != null) resp.append("Accept-Ranges: ").append(acceptRanges).append("\r\n");
             if (contentRange != null) resp.append("Content-Range: ").append(contentRange).append("\r\n");
-            if (contentLength >= 0) resp.append("Content-Length: ").append(contentLength).append("\r\n");
+            if (plaintextContentLength >= 0) resp.append("Content-Length: ").append(plaintextContentLength).append("\r\n");
             resp.append("Connection: close\r\n\r\n");
             browserOut.write(resp.toString().getBytes(StandardCharsets.US_ASCII));
             browserOut.flush();
 
-            if (contentLength <= 0) return;
+            if (plaintextContentLength <= 0) return;
+
+            DataInputStream dataIn = new DataInputStream(originIn);
+            long remainingEncryptedBytes = encryptedContentLength;
+            Key sharedKey = SecurityUtils.loadSharedKey();
 
             // Relay the body block by block; closing either socket cancels the transfer.
-            byte[] buf = new byte[BLOCK_SIZE];
-            long remaining = contentLength;
-            while (remaining > 0) {
-                int n = originIn.read(buf, 0, (int) Math.min(buf.length, remaining));
+            byte[] buf = new byte[FRAME_SIZE];
+            while (remainingEncryptedBytes > 0) {
+
+                byte[] iv = new byte[SecurityUtils.GCM_IV_LENGTH];
+
+                int n = dataIn.read(iv, 0, SecurityUtils.GCM_IV_LENGTH);
+                n += dataIn.read(buf, n - 1, (int) Math.min(buf.length, remainingEncryptedBytes));
+
+                byte[] plaintext = SecurityUtils.decrypt(buf, sharedKey, iv);
                 if (n < 0) break;
-                browserOut.write(buf, 0, n);
+                browserOut.write(plaintext);
                 browserOut.flush();
-                remaining -= n;
+                remainingEncryptedBytes -= n;
             }
         }
     }
