@@ -45,9 +45,9 @@ public class SecurityUtils {
     }
 
     public static byte[] encrypt(byte[] plaintext, Key key, byte[] iv) 
-            throws NoSuchAlgorithmException, NoSuchPaddingException,
-                      InvalidKeyException, InvalidAlgorithmParameterException,
-                      IllegalBlockSizeException, BadPaddingException
+        throws NoSuchAlgorithmException, NoSuchPaddingException,
+                InvalidKeyException, InvalidAlgorithmParameterException,
+                IllegalBlockSizeException, BadPaddingException
     {
         IvParameterSpec dps = new IvParameterSpec(iv);
             
@@ -56,5 +56,17 @@ public class SecurityUtils {
 
         return c.doFinal( plaintext );
     }
+
+    public static byte[] decrypt(byte[] ciphertext, Key key)
+        throws IllegalBlockSizeException, BadPaddingException,
+                InvalidKeyException, NoSuchAlgorithmException,
+                NoSuchPaddingException
+    {
+        Cipher c = Cipher.getInstance(CONFIG);
+        c.init(Cipher.DECRYPT_MODE, key);
+
+        return c.doFinal( ciphertext );
+    }
+
 
 }
