@@ -1,3 +1,5 @@
+package streamserver;
+
 import java.awt.MultipleGradientPaint.CycleMethod;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -22,7 +24,11 @@ import java.util.concurrent.Executors;
 import javax.crypto.BadPaddingException;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
-import javax.crypto.spec.IvParameterSpec;
+
+import security.SecurityUtils;
+
+import static security.SecurityUtils.GCM_IV_LENGTH;
+import static security.SecurityUtils.GCM_TAG_LENGTH_BITS;
 
 /**
  * Origin server implemented with raw sockets only (java.net.ServerSocket / Socket),
@@ -36,6 +42,7 @@ import javax.crypto.spec.IvParameterSpec;
 public class OriginSocketServer {
 
     static final int BLOCK_SIZE = 1024;
+    static final int FRAME_SIZE = BLOCK_SIZE + GCM_IV_LENGTH + GCM_TAG_LENGTH_BITS;
 
     public static void main(String[] args) throws Exception {
         int port = args.length > 0 ? Integer.parseInt(args[0]) : 8081;
@@ -125,9 +132,9 @@ public class OriginSocketServer {
 
         long length = end - start + 1;
 
-        long numChunks = ( length + BLOCK_SIZE - 1 ) / BLOCK_SIZE;
+        long numChunks = ( length + FRAME_SIZE - 1 ) / FRAME_SIZE;
 
-        long encryptContentLength = length + (numChunks * 32);
+        long encryptContentLength = length + (numChunks * 28);
 
         String extraHeaders = "Accept-Ranges: bytes\r\n" +
                 (partial ? "Content-Range: bytes " + start + "-" + end + "/" + size + "\r\n" : "");
@@ -144,7 +151,7 @@ public class OriginSocketServer {
 
         try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "r")) {
             raf.seek(start);
-            byte[] block = new byte[BLOCK_SIZE];
+            byte[] block = new byte[FRAME_SIZE];
             long remaining = length;
 
             while (remaining > 0) {
@@ -154,7 +161,6 @@ public class OriginSocketServer {
                 byte[] iv = SecurityUtils.generateIv();
                 byte[] ciphertext = SecurityUtils.encrypt( Arrays.copyOf(block, n), sharedKey, iv );
 
-                dataOut.write(ciphertext.length);
                 dataOut.write(iv);
                 dataOut.write(ciphertext);
                 dataOut.flush();

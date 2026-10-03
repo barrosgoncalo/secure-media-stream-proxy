@@ -69,12 +69,18 @@ public class ProxySocketServer {
             var pool = Executors.newCachedThreadPool();
             while (true) {
                 Socket client = server.accept();
-                pool.submit(() -> handle(client, originHost, originPort));
+                pool.submit(() -> {
+					try {
+						handle(client, originHost, originPort);
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+				});
             }
         }
     }
 
-    static void handle(Socket browser, String originHost, int originPort) {
+    static void handle(Socket browser, String originHost, int originPort) throws InvalidKeyException, UnrecoverableKeyException, IllegalBlockSizeException, BadPaddingException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidAlgorithmParameterException, KeyStoreException, CertificateException {
         try (browser) {
             InputStream in = browser.getInputStream();
             OutputStream out = browser.getOutputStream();
@@ -105,7 +111,7 @@ public class ProxySocketServer {
             }
 
             String name = path.substring("/video/".length());
-            relayFromOrigin(out, originHost, originPort, name, rangeHeader);
+            relayFromOrigin(out, originHost, originPort, name, rangeHeader, SecurityUtils.loadSharedKey());
 
         } catch (IOException e) {
             // Browser disconnected or origin unreachable mid-stream: nothing to do.
@@ -125,7 +131,7 @@ public class ProxySocketServer {
     }
 
     static void relayFromOrigin(OutputStream browserOut, String originHost, int originPort,
-                                 String name, String rangeHeader) throws IOException, InvalidKeyException, UnrecoverableKeyException, IllegalBlockSizeException, BadPaddingException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidAlgorithmParameterException, KeyStoreException, CertificateException {
+                                 String name, String rangeHeader, Key sharedKey) throws IOException, InvalidKeyException, UnrecoverableKeyException, IllegalBlockSizeException, BadPaddingException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidAlgorithmParameterException, KeyStoreException, CertificateException {
         try (Socket origin = new Socket(originHost, originPort)) {
             OutputStream originOut = origin.getOutputStream();
             InputStream originIn = origin.getInputStream();
@@ -182,7 +188,6 @@ public class ProxySocketServer {
 
             DataInputStream dataIn = new DataInputStream(originIn);
             long remainingEncryptedBytes = encryptedContentLength;
-            Key sharedKey = SecurityUtils.loadSharedKey();
 
             // Relay the body block by block; closing either socket cancels the transfer.
             byte[] buf = new byte[FRAME_SIZE];
