@@ -124,13 +124,21 @@ public class OriginSocketServer {
         }
 
         long length = end - start + 1;
+
+        long numChunks = ( length + BLOCK_SIZE - 1 ) / BLOCK_SIZE;
+
+        long encryptContentLength = length + (numChunks * 32);
+
         String extraHeaders = "Accept-Ranges: bytes\r\n" +
                 (partial ? "Content-Range: bytes " + start + "-" + end + "/" + size + "\r\n" : "");
         writeHeaders(
             out,
-            partial ? 206 : 200, partial ? "Partial Content" : "OK", length,
-            "video/mp4", extraHeaders
-            );
+            partial ? 206 : 200,
+            partial ? "Partial Content" : "OK",
+            encryptContentLength,
+            "video/mp4",
+            extraHeaders
+        );
 
         DataOutputStream dataOut = new DataOutputStream(out);
 
