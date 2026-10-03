@@ -1,4 +1,5 @@
-import java.util.*;
+package security;
+
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -14,20 +15,13 @@ public class SecurityUtils {
     private static final String CONFIG = "AES/GCM/NoPadding";
 
     public static final int GCM_IV_LENGTH = 12;
+    public static final int GCM_TAG_LENGTH_BITS = 12;
     private static final SecureRandom secureRandom = new SecureRandom();
 
     public static byte[] generateIv() {
         byte[] iv = new byte[GCM_IV_LENGTH];
         secureRandom.nextBytes(iv);
         return iv;
-    }
-
-    public static Key generateKey() throws NoSuchAlgorithmException {
-
-        KeyGenerator kg = KeyGenerator.getInstance(ALGO);
-        kg.init(256);
-
-        return kg.generateKey();
     }
 
     public static Key loadSharedKey()
@@ -49,7 +43,7 @@ public class SecurityUtils {
                 InvalidKeyException, InvalidAlgorithmParameterException,
                 IllegalBlockSizeException, BadPaddingException
     {
-        IvParameterSpec dps = new IvParameterSpec(iv);
+        GCMParameterSpec dps = new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv);
             
         Cipher c = Cipher.getInstance(CONFIG);
         c.init(Cipher.ENCRYPT_MODE, key, dps);
@@ -57,13 +51,14 @@ public class SecurityUtils {
         return c.doFinal( plaintext );
     }
 
-    public static byte[] decrypt(byte[] ciphertext, Key key)
+    public static byte[] decrypt(byte[] ciphertext, Key key, byte[] iv)
         throws IllegalBlockSizeException, BadPaddingException,
                 InvalidKeyException, NoSuchAlgorithmException,
-                NoSuchPaddingException
+                NoSuchPaddingException, InvalidAlgorithmParameterException
     {
+        GCMParameterSpec dps = new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv);
         Cipher c = Cipher.getInstance(CONFIG);
-        c.init(Cipher.DECRYPT_MODE, key);
+        c.init(Cipher.DECRYPT_MODE, key, dps);
 
         return c.doFinal( ciphertext );
     }

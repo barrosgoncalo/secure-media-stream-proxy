@@ -1,3 +1,4 @@
+package security;
 /**
  * Auxiliar
  * Some conversion functions
@@ -39,18 +40,4 @@ public class Utils
     {
         return toHex(data, data.length);
     }
-
-    /**
-     * Return int from byte array
-     *
-     * @param data : bytes to convert
-     * @return int : integer representation of data
-     */
-    public static int toInt(byte[] data) {
-        int value = 0;
-        for(byte b : data) {
-            value += (value << 8) + (b & 0xF);
-        }
-        return value;
-    } 
 }
